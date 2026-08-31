@@ -1,6 +1,6 @@
 {
   "name": "weeklylog-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local-first work log with SQLite, Codex hooks, weekly glow cards, and annual visual memories.",
   "license": "MIT",
   "author": "roubaojiasudu (tc6-01)",
@@ -37,7 +37,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "node --check bin/weeklylog.js && python3 -m py_compile skill/scripts/weeklylog.py",
+    "test": "node --test test/*.test.js",
+    "check": "node --check bin/weeklylog.js && python3 -m py_compile skill/scripts/weeklylog.py && npm test",
     "pack:check": "npm pack --dry-run"
   }
 }

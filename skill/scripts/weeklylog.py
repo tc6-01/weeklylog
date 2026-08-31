@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unicodedata
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
@@ -36,6 +37,13 @@ STATUS_TITLES = {
     "planned": "后续计划",
     "other": "其他工作",
 }
+SCHEMA_VERSION = 2
+
+
+@dataclass(frozen=True)
+class MigrationResult:
+    schema_version: int
+    migration_backup: Path | None = None
 
 
 def iso_day(value: str) -> str:
@@ -150,14 +158,71 @@ def ensure_column(
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.executescript(
-        """
+def application_tables_exist(conn: sqlite3.Connection) -> bool:
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
+        is not None
+    )
+
+
+def migration_backup(conn: sqlite3.Connection, db_path: Path) -> Path:
+    """Create a recoverable, privacy-redacted copy before changing the database."""
+    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+    backup_path = db_path.with_name(f"{db_path.name}.pre-migration-{stamp}.sqlite3")
+    counter = 1
+    while backup_path.exists():
+        backup_path = db_path.with_name(
+            f"{db_path.name}.pre-migration-{stamp}-{counter}.sqlite3"
+        )
+        counter += 1
+    redacted = sqlite3.connect(":memory:")
+    destination = sqlite3.connect(backup_path)
+    try:
+        redacted.execute("PRAGMA secure_delete = ON")
+        destination.execute("PRAGMA secure_delete = ON")
+        conn.commit()
+        # Copy into memory first so raw prompts/replies never get written to
+        # the long-lived backup file. The redaction is applied before the
+        # memory database is persisted.
+        conn.backup(redacted)
+        redact_transcript_fields(redacted)
+        redacted.commit()
+        redacted.execute("VACUUM")
+        redacted.backup(destination)
+        destination.commit()
+    except sqlite3.Error as exc:
+        raise SystemExit(f"无法创建迁移备份：{exc}") from exc
+    finally:
+        redacted.close()
+        destination.close()
+    return backup_path
+
+
+def redact_existing_migration_backups(db_path: Path) -> None:
+    """Scrub legacy automation transcript columns from prior migration copies."""
+    pattern = f"{db_path.name}.pre-migration-*.sqlite3"
+    for backup_path in sorted(db_path.parent.glob(pattern)):
+        backup = sqlite3.connect(backup_path)
+        try:
+            backup.execute("PRAGMA secure_delete = ON")
+            redact_transcript_fields(backup)
+            backup.commit()
+            backup.execute("VACUUM")
+        except sqlite3.Error as exc:
+            raise SystemExit(f"无法清理历史迁移备份：{exc}") from exc
+        finally:
+            backup.close()
+
+
+def migrate_to_schema_v1(conn: sqlite3.Connection) -> None:
+    schema = """
         CREATE TABLE IF NOT EXISTS entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             work_date TEXT NOT NULL,
@@ -255,16 +320,104 @@ def connect(db_path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_capture_candidates_session
             ON capture_candidates(session_id, turn_id);
         """
-    )
-    # Migrate databases created by earlier versions without rewriting user data.
+    # sqlite3.executescript() implicitly commits an open transaction. Execute
+    # each statement through the active transaction so a failed migration can
+    # be rolled back completely.
+    for statement in schema.split(";"):
+        statement = statement.strip()
+        if statement:
+            conn.execute(statement)
+    # Migrate databases created by earlier versions without rewriting work records.
     ensure_column(conn, "entries", "start_time", "TEXT")
     ensure_column(conn, "entries", "end_time", "TEXT")
     ensure_column(conn, "entries", "duration_minutes", "INTEGER")
     ensure_column(conn, "entries", "source", "TEXT NOT NULL DEFAULT 'manual'")
     ensure_column(conn, "entries", "capture_id", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source)")
-    conn.commit()
-    return conn
+
+
+def redact_transcript_fields(conn: sqlite3.Connection) -> None:
+    """Clear legacy automation transcript columns while retaining user records."""
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    if "automation_sessions" in tables:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(automation_sessions)")}
+        if "last_prompt" in columns:
+            conn.execute("UPDATE automation_sessions SET last_prompt = ''")
+    if "automation_turns" in tables:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(automation_turns)")}
+        assignments = []
+        if "prompt" in columns:
+            assignments.append("prompt = ''")
+        if "assistant_message" in columns:
+            assignments.append("assistant_message = ''")
+        if assignments:
+            conn.execute(f"UPDATE automation_turns SET {', '.join(assignments)}")
+    # Do not rewrite capture_candidates or entries here. Candidates may still
+    # need review, and promoted entries are confirmed facts that users may have
+    # edited. Their contents cannot be classified safely as transcript text.
+
+
+def migrate_to_schema_v2(conn: sqlite3.Connection) -> None:
+    """Remove transcript payloads retained by pre-v2 automatic capture."""
+    redact_transcript_fields(conn)
+
+
+def connect(db_path: Path) -> tuple[sqlite3.Connection, MigrationResult]:
+    """Open the database and apply versioned, recoverable schema migrations."""
+    existed = db_path.exists() and db_path.stat().st_size > 0
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version > SCHEMA_VERSION:
+        conn.close()
+        raise SystemExit(
+            f"数据库版本 {current_version} 高于当前 CLI 支持的版本 {SCHEMA_VERSION}"
+        )
+
+    # A previous run may have left migration copies behind (for example after
+    # an interrupted upgrade). Scrub their legacy automation fields whenever
+    # this database is opened, not only while a migration is pending.
+    redact_existing_migration_backups(db_path)
+    conn.execute("PRAGMA secure_delete = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+
+    backup_path: Path | None = None
+    if current_version < SCHEMA_VERSION:
+        if existed and application_tables_exist(conn):
+            backup_path = migration_backup(conn, db_path)
+        try:
+            conn.execute("BEGIN")
+            if current_version < 1:
+                migrate_to_schema_v1(conn)
+            if current_version < 2:
+                migrate_to_schema_v2(conn)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("VACUUM")
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+    else:
+        # Enforce the v2 invariant even for databases created by an
+        # intermediate build that already advertised the current version.
+        try:
+            conn.execute("BEGIN")
+            redact_transcript_fields(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+    return conn, MigrationResult(SCHEMA_VERSION, backup_path)
 
 
 def entry_by_id(conn: sqlite3.Connection, entry_id: int) -> dict[str, Any] | None:
@@ -553,6 +706,9 @@ def upsert_automation_session(
     prompt: str | None = None,
 ) -> None:
     now = timestamp()
+    # Keep the compatibility column empty; raw prompts are evidence, not
+    # reportable summaries and must not be persisted by automatic capture.
+    prompt = None
     row = conn.execute(
         "SELECT * FROM automation_sessions WHERE session_id = ?", (session_id,)
     ).fetchone()
@@ -616,6 +772,9 @@ def upsert_automation_turn(
     started_at: str,
 ) -> None:
     now = timestamp()
+    # The prompt column remains for schema compatibility with older databases,
+    # but new events only persist client-provided structured summaries.
+    prompt = ""
     row = conn.execute(
         "SELECT * FROM automation_turns WHERE session_id = ? AND turn_id = ?",
         (session_id, turn_id),
@@ -859,10 +1018,10 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
             conn.commit()
         result = {"action": "session_ended", "session_id": session_id, "client": client}
     elif kind == "prompt":
-        prompt = capture_text(
+        raw_prompt = capture_text(
             event_field(payload, "prompt", "user_prompt", "message", "input"), 1000
         )
-        if not prompt:
+        if not raw_prompt:
             result = {"action": "ignored", "reason": "empty_prompt"}
         else:
             if not session_id:
@@ -871,7 +1030,7 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                 ).hexdigest()[:20]
             if not turn_id:
                 turn_id = "turn-" + hashlib.sha256(
-                    f"{session_id}|{prompt}|{started_dt.isoformat(timespec='seconds')}".encode(
+                    f"{session_id}|{raw_prompt}|{started_dt.isoformat(timespec='seconds')}".encode(
                         "utf-8"
                     )
                 ).hexdigest()[:20]
@@ -884,14 +1043,14 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                 cwd=cwd,
                 started_at=started_text,
                 turn_id=turn_id,
-                prompt=prompt,
+                prompt=None,
             )
             upsert_automation_turn(
                 conn,
                 session_id=session_id,
                 turn_id=turn_id,
                 client=client,
-                prompt=prompt,
+                prompt="",
                 started_at=started_text,
             )
             conn.commit()
@@ -902,23 +1061,21 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
             }
     elif kind in {"turn_end", "task_completed"}:
         turn = open_turn_for_session(conn, session_id, turn_id) if session_id else None
-        prompt = capture_text(
-            event_field(payload, "title", "content", "prompt", "user_prompt"), 800
-        ) or (capture_text(turn.get("prompt"), 800) if turn else "")
+        title = capture_text(event_field(payload, "title", "content"), 240)
         summary = capture_text(
             event_field(
                 payload,
                 "summary",
                 "result",
+                # Compatibility fallbacks for older clients. These values are
+                # bounded and redacted in memory before they become a candidate.
                 "last_assistant_message",
                 "assistant_message",
                 "output",
             ),
             1200,
         )
-        if not summary and turn:
-            summary = capture_text(turn.get("assistant_message"), 1200)
-        if not prompt and not summary:
+        if not title and not summary:
             result = {"action": "ignored", "reason": "no_work_text"}
         else:
             if not turn_id and turn:
@@ -953,7 +1110,7 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                     seed = "|".join([client, session_id, turn_id, kind])
                 else:
                     seed = "|".join(
-                        [client, event_name, session_id, turn_id, work_date, prompt, summary]
+                        [client, event_name, session_id, turn_id, work_date, title, summary]
                     )
                 capture_id = f"{client}-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
             candidate_data = {
@@ -963,7 +1120,7 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                 "session_id": session_id or None,
                 "turn_id": turn_id or None,
                 "work_date": work_date,
-                "title": prompt or summary[:120],
+                "title": title or clipped(summary, 120) or "自动采集工作回合",
                 "summary": summary,
                 "project": project,
                 "category": category,
@@ -984,7 +1141,7 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                     """,
                     (
                         candidate.get("end_time"),
-                        summary,
+                        "",
                         timestamp(),
                         session_id,
                         turn_id,
@@ -2393,7 +2550,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("init", help="初始化数据库")
+    init_parser = subparsers.add_parser("init", help="初始化数据库")
+    init_parser.add_argument("--json", action="store_true", help="输出初始化状态 JSON")
     subparsers.add_parser("path", help="显示数据库路径")
 
     add = subparsers.add_parser("add", help="添加一条工作记录")
@@ -2552,10 +2710,26 @@ def main() -> int:
         hook_config(args)
         return 0
 
-    conn = connect(db_path)
+    conn, migration = connect(db_path)
     try:
+        if migration.migration_backup:
+            print(
+                f"已创建迁移备份：{migration.migration_backup}",
+                file=sys.stderr,
+            )
         if args.command == "init":
-            print(db_path)
+            if args.json:
+                print_json(
+                    {
+                        "database": str(db_path),
+                        "schema_version": migration.schema_version,
+                        "migration_backup": str(migration.migration_backup)
+                        if migration.migration_backup
+                        else None,
+                    }
+                )
+            else:
+                print(db_path)
         elif args.command == "add":
             add_entry(args, conn)
         elif args.command == "list":

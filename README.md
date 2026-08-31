@@ -13,6 +13,7 @@
 ```bash
 npx weeklylog-cli doctor
 npx weeklylog-cli init
+npx weeklylog-cli init --json
 npx weeklylog-cli add --content "完成登录页重构" --minutes 90 --status done
 npx weeklylog-cli report --detail
 ```
@@ -37,6 +38,8 @@ npx weeklylog-cli install --target /path/to/.codex/skills/weeklylog
 ```
 
 默认数据库是 `~/.codex/data/weeklylog/worklog.sqlite3`，也可以通过 `--db PATH` 或 `WEEKLYLOG_DB` 覆盖。
+
+`init --json` 会返回当前 schema 版本和迁移备份路径。首次打开旧版数据库时，weeklylog 会在改变数据结构前自动创建经过隐私裁剪的 `worklog.sqlite3.pre-migration-*` 备份，并把位置写到标准错误；历史迁移备份中的自动化兼容字段也会一并清理。迁移成功后再次运行不会重复创建备份。旧版自动采集的会话 prompt/回复兼容字段会在迁移时清空，候选和已确认工作记录会保留；后续新事件只保留有界的短摘要。
 
 ## 常用命令
 
