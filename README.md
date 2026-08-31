@@ -53,6 +53,12 @@ npx weeklylog-cli annual-report --year 2026 --output weeklylog-2026.md
 npx weeklylog-cli dataset --week 2026-08-31 --json
 npx weeklylog-cli weekglow --week 2026-08-31 --output-dir ./weekglow-2026-08-31 --format both
 npx weeklylog-cli yearglow --year 2026 --output-dir ./yearglow-2026 --format both
+npx weeklylog-cli outbox list --state pending --json
+npx weeklylog-cli outbox claim --lease-minutes 10 --json
+npx weeklylog-cli outbox ack EVENT_ID --claim-token CLAIM_TOKEN --json
+npx weeklylog-cli backup --output ./worklog-backup.sqlite3 --json
+npx weeklylog-cli export --output ./worklog.json --json
+npx weeklylog-cli import --input ./worklog.json --json
 ```
 
 ## 两个视觉 skill
@@ -63,7 +69,16 @@ npx weeklylog-cli yearglow --year 2026 --output-dir ./yearglow-2026 --format bot
 
 两者都采用“少字、多图、事实叠加”的方式：SVG 负责准确数字和用户原话，渐变、光圈和节奏图形负责情绪。需要更个性化的插画或照片背景时，可在 Codex 中让 `imagegen` 生成无文字背景，再叠加事实层；缺失字段会明确显示“还没有记录”，不会把估算当成事实。
 
-如果只需要可检索的数据，可用 `dataset` 导出 JSON；如果需要 Markdown 细节，继续使用 `report --detail` 或 `annual-report`。
+如果只需要可检索的数据，可用 `dataset` 导出 JSON（其中 `time_summary` 分开列出 AI 可观测、人工确认和旧版/未分类时长）；如果需要 Markdown 细节，继续使用 `report --detail` 或 `annual-report`。
+
+自动 Evidence 与生命周期整理：
+
+```bash
+npx weeklylog-cli evidence git --repo /path/to/repo --since '7 days ago' --json
+npx weeklylog-cli hook promote-batch 12 13 --json
+npx weeklylog-cli hook merge 12 13 --json
+npx weeklylog-cli cleanup --as-of 2026-08-31 --json
+```
 
 ## Codex hook 集成
 

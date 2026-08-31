@@ -1,6 +1,6 @@
 # Redact legacy transcript payloads during migration
 
-Weeklylog keeps automatic-capture metadata useful for timing and provenance, but new captures must not retain complete prompts or model replies. Schema version 2 therefore clears legacy transcript compatibility fields in the live database. Pre-migration backups are made through an in-memory copy, redacted there, and only then persisted to disk.
+Weeklylog keeps automatic-capture metadata useful for timing and provenance, but new captures must not retain complete prompts or model replies. Schema version 2 and later therefore clear legacy transcript compatibility fields in the live database. Pre-migration backups are made through an in-memory copy, redacted there, and only then persisted to disk.
 
 ## Consequences
 

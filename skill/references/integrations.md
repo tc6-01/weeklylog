@@ -67,7 +67,7 @@ printf '%s\n' '{
 - 标识：`id`/`event_id`、`session_id`、`turn_id`。提供稳定的 `id` 可保证重放不会产生重复记录。
 - 内容：优先使用 `title`/`content`、`summary`/`result`。旧客户端的 `last_assistant_message`/`assistant_message`/`output` 仅作为有界兼容摘要在内存中裁剪；`prompt` 事件只用于开始计时，不会写入 SQLite；不要发送完整 prompt 或工具原始输出。
 - 时间：`started_at`、`ended_at` 或 `duration_minutes`。时间接受 ISO 8601。
-- 上下文：`client`、`project`、`category`、`status`、`tags`、`cwd`。
+- 上下文：`client`、`project`、`category`、`status`、`tags`、`cwd`、`task_key`、`work_item_id`、`jira_key`、`confidence`、`provenance`。
 
 候选审核：
 
@@ -80,6 +80,8 @@ python3 "$SCRIPT" hook ignore 13
 ### 客户端适配器建议
 
 客户端自身的 hook 只负责读取事件、生成短小的结构化 `title`/`summary` 并调用 weeklylog；不要把完整 transcript、API key、工具原始输出写入数据库。对于只有“会话结束”事件的客户端，发送 `task_completed` 并附上客户端生成的短摘要；对于只有命令生命周期的客户端，建议先记录候选，不要把每条命令都当成工作事项。
+
+Git 辅助 Evidence 可通过 `evidence git` 采集 commit hash、短标题、作者时间和仓库路径；不会读取 diff 或文件正文。候选/正式记录变化会写入本地 `outbox`，可由未来 adapter 使用 `outbox claim --lease-minutes 10`、再将返回的 `claim_token` 传给 `outbox ack` 或 `outbox fail` 管理投递状态；领取租约过期后可被其他消费者回收，旧消费者不能用过期 token 确认新租约，当前版本不会访问 Jira 或其他网络服务。
 
 ## 故障与隐私
 

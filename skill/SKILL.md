@@ -108,7 +108,7 @@ python3 <script> dataset --week 2026-08-31 --json
 python3 <script> dataset --year 2026 --json
 ```
 
-数据集包含 `entries`、`reflections` 和单独的 `pending_candidates`；候选不计入正式统计。
+数据集包含 `entries`、`reflections`、采集覆盖范围和单独的 `pending_candidates`；候选不计入正式统计。需要预览候选时显式使用 `dataset --draft`，输出会带 `draft: true` 和 `candidates`。
 
 ## 自动采集与 hook 集成
 
@@ -121,6 +121,31 @@ python3 <script> hook list --week 2026-08-31
 python3 <script> hook promote 12
 python3 <script> hook ignore 13
 ```
+
+批量整理、合并或拆分候选：
+
+```bash
+python3 <script> hook promote-batch 12 13
+python3 <script> hook ignore-batch 14,15
+python3 <script> hook merge 16 17
+python3 <script> hook split 18 --parts '[{"title":"子事项 A","summary":"...","evidence_ids":["..."]},{"title":"子事项 B","summary":"...","evidence_ids":["..."]}]'
+```
+
+辅助 Evidence、Outbox、保留清理与本地迁移：
+
+```bash
+python3 <script> evidence git --repo /path/to/repo --since '7 days ago' --json
+python3 <script> outbox list --state pending --json
+python3 <script> outbox claim --lease-minutes 10 --json
+python3 <script> outbox ack EVENT_ID --claim-token CLAIM_TOKEN --json
+python3 <script> cleanup --as-of 2026-08-31 --json
+python3 <script> cleanup --as-of 2026-08-31 --execute --yes --json
+python3 <script> backup --output /path/to/worklog.sqlite3 --json
+python3 <script> export --output /path/to/worklog.json --json
+python3 <script> import --input /path/to/worklog.json --json
+```
+
+`export` 的 JSON 版本固定为 `export_schema_version: 1`；未知未来的导出格式或 weeklylog schema 会拒绝导入。导入只接受本地文件，重复导入相同数据幂等，冲突或结构错误会返回机器可读错误而不会静默覆盖。Outbox ack/fail 必须回传 claim 返回的 token，避免租约过期后的旧消费者误确认。模板周报还支持 `{{time_summary}}`，显示 AI 可观测、人工确认和旧版/未分类时长。
 
 Codex 原生 hook 配置片段可用下面的命令生成（只输出配置，不会改写现有 `~/.codex/hooks.json`）：
 
