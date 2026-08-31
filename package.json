@@ -6,7 +6,7 @@
   "author": "roubaojiasudu (tc6-01)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tc6-01/weeklylog.git"
+    "url": "git+https://github.com/tc6-01/weeklylog.git"
   },
   "homepage": "https://github.com/tc6-01/weeklylog",
   "bugs": {
@@ -24,7 +24,7 @@
     "node": ">=18"
   },
   "bin": {
-    "weeklylog": "./bin/weeklylog.js"
+    "weeklylog": "bin/weeklylog.js"
   },
   "files": [
     "bin",
