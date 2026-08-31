@@ -325,6 +325,27 @@ def reflection_for_week(
     return item
 
 
+def reflections_for_range(
+    conn: sqlite3.Connection, start: str, end: str
+) -> list[dict[str, Any]]:
+    """Return reflections whose six-day week overlaps an inclusive date range."""
+    range_start = date.fromisoformat(start)
+    range_end = date.fromisoformat(end)
+    rows = conn.execute(
+        "SELECT * FROM weekly_reflections WHERE week_start <= ? ORDER BY week_start",
+        (end,),
+    ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        reflection_start = date.fromisoformat(item["week_start"])
+        reflection_end = reflection_start + timedelta(days=6)
+        if reflection_end >= range_start and reflection_start <= range_end:
+            item["week_end"] = reflection_end.isoformat()
+            result.append(item)
+    return result
+
+
 def reflect(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
     current = reflection_for_week(conn, args.week)
     provided = {
@@ -1231,6 +1252,61 @@ def list_entries(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
         )
 
 
+def entries_for_range(
+    conn: sqlite3.Connection, start: str, end: str
+) -> list[dict[str, Any]]:
+    query_args = argparse.Namespace(
+        week=None,
+        from_date=start,
+        to_date=end,
+        project=None,
+        category=None,
+        status=None,
+        search=None,
+        tag=[],
+    )
+    items, _, _ = query_entries(conn, query_args)
+    return items
+
+
+def dataset_export(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
+    if bool(args.from_date) != bool(args.to_date):
+        raise SystemExit("--from-date 和 --to-date 必须一起使用")
+    if args.week and args.to_date:
+        raise SystemExit("--week 不能与 --to-date 一起使用")
+    if args.week:
+        start, end = week_range(args.week)
+        label = f"week:{start}"
+    elif args.year:
+        start, end = f"{args.year:04d}-01-01", f"{args.year:04d}-12-31"
+        label = f"year:{args.year:04d}"
+    elif args.from_date and args.to_date:
+        if args.from_date > args.to_date:
+            raise SystemExit("--from-date 不能晚于 --to-date")
+        start, end = args.from_date, args.to_date
+        label = f"range:{start}:{end}"
+    else:
+        start, end = week_range()
+        label = f"week:{start}"
+
+    items = entries_for_range(conn, start, end)
+    payload = {
+        "schema_version": 1,
+        "range": {"from": start, "to": end, "label": label},
+        "entries": items,
+        "reflections": reflections_for_range(conn, start, end),
+        "pending_candidates": pending_candidates(conn, start, end, limit=100),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(encoded, encoding="utf-8")
+        print(output_path)
+    else:
+        print(encoded, end="")
+
+
 def update_entry(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
     current = entry_by_id(conn, args.id)
     if current is None:
@@ -1991,6 +2067,321 @@ def poster(
         print(png_path or svg_path)
 
 
+def _deck_card_svg(
+    *,
+    eyebrow: str,
+    title: str,
+    metric: str,
+    metric_label: str,
+    body: str,
+    footer: str,
+    accent: str,
+    index: int,
+    total: int,
+    bars: list[tuple[str, int]] | None = None,
+) -> str:
+    """Build one quiet, image-first card with exact data overlaid as SVG text."""
+    title_svg = svg_text_block(
+        title, 78, 220, size=62, fill="#FFFFFF", max_width=25,
+        max_lines=3, line_height=78, weight=760,
+    )
+    body_svg = svg_text_block(
+        body, 86, 730, size=31, fill="#F8F5FF", max_width=28,
+        max_lines=7, line_height=48, weight=500, opacity=.92,
+    )
+    footer_svg = svg_text_block(
+        footer, 86, 1225, size=21, fill="#FFFFFF", max_width=42,
+        max_lines=2, line_height=32, weight=560, opacity=.68,
+    )
+    bars_svg = ""
+    if bars:
+        peak = max(value for _, value in bars) or 1
+        x = 90
+        for label, value in bars[:12]:
+            height = int(190 * value / peak) if value else 4
+            bars_svg += (
+                f'<rect x="{x}" y="1060" width="44" height="{height}" rx="12" '
+                f'fill="{accent}" fill-opacity=".82"/>'
+                f'<text x="{x + 22}" y="1098" text-anchor="middle" font-size="15" '
+                f'fill="#FFFFFF" opacity=".65" font-family="-apple-system, PingFang SC, sans-serif">'
+                f'{escape(label)}</text>'
+            )
+            x += 72
+
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440" viewBox="0 0 1080 1440">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111226"/>
+      <stop offset=".55" stop-color="#24183C"/>
+      <stop offset="1" stop-color="#0A2530"/>
+    </linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="{accent}" stop-opacity=".72"/><stop offset="1" stop-color="{accent}" stop-opacity="0"/></radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="36"/></filter>
+  </defs>
+  <rect width="1080" height="1440" fill="url(#bg)"/>
+  <circle cx="965" cy="150" r="360" fill="url(#glow)" filter="url(#blur)"/>
+  <circle cx="70" cy="1175" r="390" fill="url(#glow)" opacity=".65" filter="url(#blur)"/>
+  <circle cx="945" cy="650" r="310" fill="none" stroke="#FFFFFF" stroke-opacity=".07" stroke-width="2"/>
+  <circle cx="945" cy="650" r="230" fill="none" stroke="#FFFFFF" stroke-opacity=".05" stroke-width="56"/>
+  <path d="M0 380 C180 300 270 470 450 395 S760 280 1080 375" fill="none" stroke="#FFFFFF" stroke-opacity=".06" stroke-width="2"/>
+  <text x="78" y="84" font-size="18" fill="#FFFFFF" opacity=".64" font-weight="700" letter-spacing="5" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, sans-serif">{escape(eyebrow)}</text>
+  {title_svg}
+  <text x="84" y="510" font-size="116" fill="#FFFFFF" font-weight="820" letter-spacing="-3" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, sans-serif">{escape(metric)}</text>
+  <text x="90" y="562" font-size="20" fill="{accent}" font-weight="700" letter-spacing="3" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, sans-serif">{escape(metric_label)}</text>
+  <rect x="78" y="620" width="924" height="470" rx="38" fill="#050713" fill-opacity=".47" stroke="#FFFFFF" stroke-opacity=".10"/>
+  <circle cx="920" cy="700" r="38" fill="{accent}" fill-opacity=".18"/>
+  <circle cx="920" cy="700" r="10" fill="{accent}"/>
+  {body_svg}
+  {bars_svg}
+  <line x1="78" y1="1170" x2="1002" y2="1170" stroke="#FFFFFF" stroke-opacity=".12"/>
+  {footer_svg}
+  <text x="1002" y="1362" text-anchor="end" font-size="16" fill="#FFFFFF" opacity=".45" font-weight="700" letter-spacing="4" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, sans-serif">{index:02d} / {total:02d}</text>
+</svg>'''
+
+
+def _first_nonempty(values: Iterable[str], fallback: str) -> str:
+    for value in values:
+        if value and value.strip():
+            return value.strip()
+    return fallback
+
+
+def _week_deck_specs(
+    items: list[dict[str, Any]], reflection: dict[str, Any], start: str, end: str
+) -> list[dict[str, Any]]:
+    tracked = [item for item in items if item["duration_minutes"] is not None]
+    total_minutes = sum(int(item["duration_minutes"]) for item in tracked)
+    latest = max(
+        (item for item in items if item_datetime(item, "end_time")),
+        key=lambda item: item_datetime(item, "end_time"),
+        default=None,
+    )
+    longest = max(tracked, key=lambda item: int(item["duration_minutes"]), default=None)
+    late = [item for item in items if is_late_finish(item_datetime(item, "end_time"))]
+    hard = _first_nonempty(
+        [reflection.get("hard_moment", "")]
+        + [item["content"] for item in items if item["status"] == "blocked"],
+        "这一周还没有写下最难的一刻。",
+    )
+    happy = _first_nonempty(
+        [reflection.get("happy_moment", "")]
+        + [item.get("result", "") for item in reversed(items) if item["status"] == "done"],
+        "这一周还没有写下值得开心的事。",
+    )
+    latest_text = "还没有记录结束时间。"
+    if latest:
+        latest_text = f"{latest['work_date']} {format_clock(latest.get('end_time'))} · {latest['content']}"
+    longest_text = "还没有填写耗时。"
+    if longest:
+        longest_text = f"{longest['content']}（{longest['work_date']}）"
+    mood = f"{reflection['mood']:g} / 5" if reflection.get("mood") is not None else "— / 5"
+    return [
+        {
+            "eyebrow": "WEEKGLOW · WORK EVIDENCE",
+            "title": "这一周，你没有白忙。",
+            "metric": str(len(items)),
+            "metric_label": f"条工作痕迹 · {start[5:].replace('-', '.')} — {end[5:].replace('-', '.')}",
+            "body": "每一条记录，都是你把混乱变成进度的证据。",
+            "footer": f"完成 {sum(item['status'] == 'done' for item in items)} 项 · 专注 {len({item['work_date'] for item in items})} 天 · 已记录投入 {format_duration(total_minutes) if tracked else '—'}",
+            "accent": "#FF806F",
+        },
+        {
+            "eyebrow": "WEEKGLOW · THE LATEST HOUR",
+            "title": "最晚干活到几点？",
+            "metric": format_clock(latest.get("end_time"))[6:] if latest else "—",
+            "metric_label": "最后一次记录的结束时间",
+            "body": latest_text,
+            "footer": f"本周有 {len(late)} 次记录落在 22:00–05:00；时间是提醒，不是勋章。",
+            "accent": "#FFC85F",
+        },
+        {
+            "eyebrow": "WEEKGLOW · THE DEEPEST INVESTMENT",
+            "title": "什么问题最耗时？",
+            "metric": format_duration(longest["duration_minutes"]) if longest else "—",
+            "metric_label": "单条记录最长投入",
+            "body": longest_text,
+            "footer": f"本周合计已记录投入 {format_duration(total_minutes) if tracked else '—'}；没有耗时也没关系，下周可以从一条开始。",
+            "accent": "#9E8CFF",
+        },
+        {
+            "eyebrow": "WEEKGLOW · THE HARD PART",
+            "title": "你扛住的时刻。",
+            "metric": str(sum(item["status"] == "blocked" for item in items)),
+            "metric_label": "条被标记为阻塞的记录",
+            "body": hard,
+            "footer": "难题没有抹掉你的努力；它只是说明你曾经认真走到这里。",
+            "accent": "#FF9EBC",
+        },
+        {
+            "eyebrow": "WEEKGLOW · A SMALL WIN",
+            "title": "值得开心的事。",
+            "metric": str(sum(item["status"] == "done" for item in items)),
+            "metric_label": "条完成记录",
+            "body": happy,
+            "footer": "把小小的完成收好，幸福感通常就是这样长出来的。",
+            "accent": "#67D7C4",
+        },
+        {
+            "eyebrow": "WEEKGLOW · NOTE TO SELF",
+            "title": "给正在努力的你。",
+            "metric": mood,
+            "metric_label": "本周幸福指数",
+            "body": reflection.get("self_note") or "辛苦被看见，进步也值得被记住。",
+            "footer": "下周继续记录事实，也记得给自己留一点掌声。",
+            "accent": "#79B8FF",
+        },
+    ]
+
+
+def _year_deck_specs(
+    items: list[dict[str, Any]], reflections: list[dict[str, Any]], year: int
+) -> list[dict[str, Any]]:
+    tracked = [item for item in items if item["duration_minutes"] is not None]
+    total_minutes = sum(int(item["duration_minutes"]) for item in tracked)
+    late = [item for item in items if is_late_finish(item_datetime(item, "end_time"))]
+    longest = max(tracked, key=lambda item: int(item["duration_minutes"]), default=None)
+    month_counts = [
+        (f"{month:02d}", sum(int(item["work_date"][5:7]) == month for item in items))
+        for month in range(1, 13)
+    ]
+    projects = project_summary(items)[:3]
+    project_text = "；".join(
+        f"{project} {count} 项 / {format_duration(minutes)}"
+        for project, count, minutes in projects
+    ) or "还没有项目分布。"
+    hard = [item["hard_moment"] for item in reflections if item.get("hard_moment")]
+    happy = [item["happy_moment"] for item in reflections if item.get("happy_moment")]
+    notes = [item["self_note"] for item in reflections if item.get("self_note")]
+    moods = [float(item["mood"]) for item in reflections if item.get("mood") is not None]
+    average_mood = f"{sum(moods) / len(moods):.1f} / 5" if moods else "— / 5"
+    longest_text = f"{longest['content']}（{longest['work_date']}）" if longest else "还没有填写耗时。"
+    hard_text = "\n".join(f"· {value}" for value in hard[:3]) or "还没有保存艰辛时刻。"
+    happy_text = "\n".join(f"· {value}" for value in happy[:3]) or "还没有保存开心瞬间。"
+    note_text = "\n".join(f"· {value}" for value in notes[-3:]) or "给未来的自己留一句话。"
+    return [
+        {
+            "eyebrow": f"YEAR GLOW · {year:04d} MEMORY",
+            "title": f"这一年，你真的走了很远。",
+            "metric": str(len(items)),
+            "metric_label": "条工作记录",
+            "body": "不是一张成绩单，而是一整年努力留下的光。",
+            "footer": f"{len({item['work_date'] for item in items})} 个工作日 · {len({week_range(item['work_date'])[0] for item in items})} 周留下痕迹 · 已记录投入 {format_duration(total_minutes) if tracked else '—'}",
+            "accent": "#FF806F",
+        },
+        {
+            "eyebrow": "YEAR GLOW · YOUR RHYTHM",
+            "title": "你的年度节奏。",
+            "metric": str(max(month_counts, key=lambda value: value[1])[1] if items else 0),
+            "metric_label": "单月最多记录",
+            "body": "忙与缓都有意义，持续出现本身就是一种能力。",
+            "footer": "每根柱子都代表一个月里，你曾经认真投入过。",
+            "accent": "#9E8CFF",
+            "bars": month_counts,
+        },
+        {
+            "eyebrow": "YEAR GLOW · THE BIGGEST CHAPTER",
+            "title": "什么问题最耗时？",
+            "metric": format_duration(longest["duration_minutes"]) if longest else "—",
+            "metric_label": "单条记录最长投入",
+            "body": longest_text,
+            "footer": f"全年累计已记录投入 {format_duration(total_minutes) if tracked else '—'}。",
+            "accent": "#FFC85F",
+        },
+        {
+            "eyebrow": "YEAR GLOW · LATE NIGHTS",
+            "title": "你把多少夜晚留给了工作？",
+            "metric": str(len(late)),
+            "metric_label": "22:00–05:00 结束的记录",
+            "body": "这些时间值得被看见，也值得提醒你：努力之外，休息同样是生产力。",
+            "footer": "只统计你明确写下结束时间的记录。",
+            "accent": "#79B8FF",
+        },
+        {
+            "eyebrow": "YEAR GLOW · PROJECT CONSTELLATION",
+            "title": "哪些项目陪你走得最久？",
+            "metric": str(len(projects)),
+            "metric_label": "最常出现的项目（最多 3 个）",
+            "body": project_text,
+            "footer": "项目名来自你的原始记录，没有做主观归因。",
+            "accent": "#67D7C4",
+        },
+        {
+            "eyebrow": "YEAR GLOW · THE HARD PART",
+            "title": "一年中的艰辛时刻。",
+            "metric": str(len(hard)),
+            "metric_label": "条复盘里的难题",
+            "body": hard_text,
+            "footer": "你不需要把难过包装成鸡汤；记住自己走过，就已经很勇敢。",
+            "accent": "#FF9EBC",
+        },
+        {
+            "eyebrow": "YEAR GLOW · THE LIGHT",
+            "title": "一年中的开心瞬间。",
+            "metric": str(len(happy)),
+            "metric_label": "条复盘里的小确幸",
+            "body": happy_text,
+            "footer": "这些不是琐事，是你愿意继续向前的理由。",
+            "accent": "#67D7C4",
+        },
+        {
+            "eyebrow": "YEAR GLOW · KEEP THIS",
+            "title": "给未来的自己。",
+            "metric": average_mood,
+            "metric_label": "年度平均幸福指数",
+            "body": note_text,
+            "footer": f"{len(reflections)} 周留下复盘；明年也请继续把自己的努力还给自己。",
+            "accent": "#FF806F",
+        },
+    ]
+
+
+def deck(args: argparse.Namespace, conn: sqlite3.Connection, db_path: Path) -> None:
+    if args.kind == "week":
+        if args.year:
+            raise SystemExit("week deck 不能与 --year 一起使用")
+        items, start, end = entries_for_week(conn, args.week)
+        reflections = [reflection_for_week(conn, args.week)]
+        specs = _week_deck_specs(items, reflections[0], start, end)
+        stem = f"weekglow-{start}"
+    else:
+        if args.week:
+            raise SystemExit("year deck 不能与 --week 一起使用")
+        year = args.year or date.today().year
+        start, end = f"{year:04d}-01-01", f"{year:04d}-12-31"
+        items = entries_for_range(conn, start, end)
+        reflections = reflections_for_range(conn, start, end)
+        specs = _year_deck_specs(items, reflections, year)
+        stem = f"yearglow-{year:04d}"
+
+    output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else db_path.parent / "decks" / stem
+    output_dir.mkdir(parents=True, exist_ok=True)
+    files: list[dict[str, str]] = []
+    total = len(specs)
+    for index, spec in enumerate(specs, 1):
+        svg_path = output_dir / f"{index:02d}-{stem}.svg"
+        svg_path.write_text(
+            _deck_card_svg(index=index, total=total, **spec), encoding="utf-8"
+        )
+        item = {"svg": str(svg_path)}
+        if args.format in {"png", "both"}:
+            png_path = svg_path.with_suffix(".png")
+            render_png(svg_path, png_path)
+            item["png"] = str(png_path)
+        files.append(item)
+    result = {
+        "kind": args.kind,
+        "range": {"from": start, "to": end},
+        "entry_count": len(items),
+        "card_count": len(files),
+        "cards": files,
+        "output_dir": str(output_dir),
+    }
+    if args.json:
+        print_json(result)
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="将工作与每周复盘保存到本地 SQLite，并生成周报或成长海报。"
@@ -2031,6 +2422,17 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--search", help="搜索事项、成果、项目或分类")
     listing.add_argument("--json", action="store_true", help="输出 JSON")
 
+    dataset = subparsers.add_parser(
+        "dataset", help="导出给周度/年度视觉 skill 使用的结构化 JSON"
+    )
+    dataset_range = dataset.add_mutually_exclusive_group()
+    dataset_range.add_argument("--week", type=iso_day, help="导出该日期所在自然周")
+    dataset_range.add_argument("--year", type=int, help="导出指定年份")
+    dataset_range.add_argument("--from-date", type=iso_day, help="起始日期")
+    dataset.add_argument("--to-date", type=iso_day, help="结束日期")
+    dataset.add_argument("--output", help="可选的 JSON 输出路径")
+    dataset.add_argument("--json", action="store_true", help="兼容机器调用；默认即输出 JSON")
+
     update = subparsers.add_parser("update", help="更新一条工作记录")
     update.add_argument("id", type=int, help="记录 ID")
     update.add_argument("--date", type=iso_day, help="工作日期")
@@ -2070,6 +2472,19 @@ def build_parser() -> argparse.ArgumentParser:
     annual_parser = subparsers.add_parser("annual-report", help="生成年度长篇总结")
     annual_parser.add_argument("--year", type=int, default=date.today().year, help="年份，默认今年")
     annual_parser.add_argument("--output", help="可选的 Markdown 输出路径")
+
+    deck_parser = subparsers.add_parser(
+        "deck", help="生成多张低文字视觉卡片（weekglow/yearglow 共用）"
+    )
+    deck_parser.add_argument("--kind", choices=("week", "year"), required=True)
+    deck_parser.add_argument("--week", type=iso_day, help="周卡片使用该日期所在自然周")
+    deck_parser.add_argument("--year", type=int, help="年度卡片使用指定年份")
+    deck_parser.add_argument("--output-dir", help="输出目录，默认写入数据库旁的 decks/")
+    deck_parser.add_argument(
+        "--format", choices=("svg", "png", "both"), default="svg",
+        help="输出格式，默认 svg；png/both 需要系统有 sips 或 qlmanage",
+    )
+    deck_parser.add_argument("--json", action="store_true", help="输出结果 JSON")
 
     hook = subparsers.add_parser(
         "hook", help="接收 Codex 或其他 AI 客户端的自动采集事件"
@@ -2145,6 +2560,8 @@ def main() -> int:
             add_entry(args, conn)
         elif args.command == "list":
             list_entries(args, conn)
+        elif args.command == "dataset":
+            dataset_export(args, conn)
         elif args.command == "update":
             update_entry(args, conn)
         elif args.command == "delete":
@@ -2157,6 +2574,8 @@ def main() -> int:
             poster(args, conn, db_path)
         elif args.command == "annual-report":
             annual_report(args, conn)
+        elif args.command == "deck":
+            deck(args, conn, db_path)
         elif args.command == "hook":
             if args.hook_command == "ingest":
                 hook_ingest(args, conn)

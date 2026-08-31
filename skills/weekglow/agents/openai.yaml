@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weekglow"
+  short_description: "把一周努力做成少字多图的成长卡片"
+  default_prompt: "使用 $weekglow 读取 weeklylog 的本周事实，生成 6 张少字多图的周度成长卡片；时间、数字和情绪只使用已记录内容。"

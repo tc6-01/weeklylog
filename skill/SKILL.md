@@ -1,6 +1,6 @@
 ---
 name: weeklylog
-description: 记录和查询日常工作，保存每周幸福指数、艰辛时刻与开心瞬间，并从本地 SQLite 生成深度周报、年度长篇总结或成长海报；也可接收 Codex 或其他 AI 客户端的 hook 自动采集候选。用户要求记录工作、回顾一周、补充复盘、查询历史事项、撰写周报、分析投入时间、接入自动记录或生成每周/年度总结时使用；不用于与工作记录无关的通用任务规划。
+description: 记录和查询日常工作，保存每周幸福指数、艰辛时刻与开心瞬间，并从本地 SQLite 生成深度周报、年度长篇总结或基础成长海报；也可接收 Codex 或其他 AI 客户端的 hook 自动采集候选。用户要求记录工作、回顾一周、补充复盘、查询历史事项、撰写周报、分析投入时间或接入自动记录时使用；少字多图的周度/年度视觉回顾请转交 $weekglow 或 $yearglow。
 ---
 
 # Weeklylog
@@ -82,6 +82,8 @@ python3 <script> poster --week 2026-08-31 --output /path/to/weeklylog.png --json
 
 海报包含记录数、专注工作日、完成率、本周关键词、最难时刻、开心瞬间、幸福指数和给自己的话。默认输出 SVG；在支持 macOS Quick Look 的环境中，`.png` 输出会同时保留 SVG 源文件。生成后向用户展示图片并给出保存位置。
 
+如果用户要多张少字多图的周度视觉故事，转交 `$weekglow`；如果要年度多页视觉回顾，转交 `$yearglow`。两个 skill 都只读本 skill 写入的事实，不会改写数据库。
+
 生成年度长篇总结：
 
 ```bash
@@ -90,6 +92,15 @@ python3 <script> annual-report --year 2026 --output /path/to/weeklylog-2026.md
 ```
 
 年度总结不是海报的简单拼接，而是按月份、项目、投入时长、最晚工作日、最耗时事项和每周复盘碎片组织的 Markdown 长文。用户说“年度总结”但没有指定年份时使用当前年份；指定“去年”时使用上一自然年。
+
+导出给视觉 skill 或其他客户端的稳定 JSON 数据集：
+
+```bash
+python3 <script> dataset --week 2026-08-31 --json
+python3 <script> dataset --year 2026 --json
+```
+
+数据集包含 `entries`、`reflections` 和单独的 `pending_candidates`；候选不计入正式统计。
 
 ## 自动采集与 hook 集成
 

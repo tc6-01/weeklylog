@@ -1,6 +1,6 @@
 # weeklylog
 
-`weeklylog` 是一个 local-first 的每周工作记录工具：数据保存在本机 SQLite，支持深度周报、年度长篇总结、成长海报，以及 Codex/其他 AI 客户端的 hook 自动采集。
+`weeklylog` 是一个 local-first 的工作记录工具：数据保存在本机 SQLite，支持深度周报、年度长篇总结、成长海报，以及 Codex/其他 AI 客户端的 hook 自动采集。视觉回顾已经拆成两个独立 skill：`weekglow` 负责每周多卡片，`yearglow` 负责年度多页记忆。
 
 由于 npm 上已有同名包，本项目的 npx 包名是 `weeklylog-cli`，命令名仍然是 `weeklylog`。
 
@@ -17,16 +17,22 @@ npx weeklylog-cli add --content "完成登录页重构" --minutes 90 --status do
 npx weeklylog-cli report --detail
 ```
 
-将 Codex skill 安装到 `~/.codex/skills/weeklylog`：
+一次安装三个 Codex skill（`weeklylog`、`weekglow`、`yearglow`）：
 
 ```bash
 npx weeklylog-cli install
 ```
 
-目标已存在时，使用 `--force` 更新；也可以指定安装目录：
+目标已存在时，使用 `--force` 更新；也可以指定 skills 根目录：
 
 ```bash
 npx weeklylog-cli install --force
+npx weeklylog-cli install --skills-dir /path/to/.codex/skills
+```
+
+兼容旧版的精确目标参数仍然可用（只安装 `weeklylog`）：
+
+```bash
 npx weeklylog-cli install --target /path/to/.codex/skills/weeklylog
 ```
 
@@ -41,7 +47,20 @@ npx weeklylog-cli report --week 2026-08-31 --detail
 npx weeklylog-cli reflect --week 2026-08-31 --mood 4.2 --hard-moment "联调卡了三个小时"
 npx weeklylog-cli poster --week 2026-08-31 --output weeklylog.png
 npx weeklylog-cli annual-report --year 2026 --output weeklylog-2026.md
+npx weeklylog-cli dataset --week 2026-08-31 --json
+npx weeklylog-cli weekglow --week 2026-08-31 --output-dir ./weekglow-2026-08-31 --format both
+npx weeklylog-cli yearglow --year 2026 --output-dir ./yearglow-2026 --format both
 ```
+
+## 两个视觉 skill
+
+`weekglow` 默认输出 6 张卡片：这一周留下多少工作痕迹、最晚干到几点、最耗时的问题、扛住的时刻、小小的胜利，以及给自己的话。
+
+`yearglow` 默认输出 8 张页面：全年总览、月份节奏、最大投入、深夜记录、项目星座、艰辛时刻、开心瞬间和写给未来的自己。
+
+两者都采用“少字、多图、事实叠加”的方式：SVG 负责准确数字和用户原话，渐变、光圈和节奏图形负责情绪。需要更个性化的插画或照片背景时，可在 Codex 中让 `imagegen` 生成无文字背景，再叠加事实层；缺失字段会明确显示“还没有记录”，不会把估算当成事实。
+
+如果只需要可检索的数据，可用 `dataset` 导出 JSON；如果需要 Markdown 细节，继续使用 `report --detail` 或 `annual-report`。
 
 ## Codex hook 集成
 
@@ -95,4 +114,4 @@ npm run check
 npm run pack:check
 ```
 
-Python CLI 和 Codex skill 位于 [`skill/`](skill/)，Node wrapper 只负责 npx 分发、skill 安装和运行时检查。
+Python CLI 和 `weeklylog` skill 位于 [`skill/`](skill/)，视觉 skills 位于 [`skills/`](skills/)。Node wrapper 负责 npx 分发、三套 skill 安装和运行时检查。

@@ -1,7 +1,7 @@
 {
   "name": "weeklylog-cli",
-  "version": "0.1.0",
-  "description": "Local-first weekly work log with SQLite, Codex hooks, reports, and growth posters.",
+  "version": "0.2.0",
+  "description": "Local-first work log with SQLite, Codex hooks, weekly glow cards, and annual visual memories.",
   "license": "MIT",
   "author": "roubaojiasudu (tc6-01)",
   "repository": {
@@ -18,7 +18,9 @@
     "sqlite",
     "codex",
     "hooks",
-    "productivity"
+    "productivity",
+    "weekglow",
+    "yearglow"
   ],
   "engines": {
     "node": ">=18"
@@ -29,6 +31,7 @@
   "files": [
     "bin",
     "skill",
+    "skills",
     "README.md",
     "LICENSE"
   ],

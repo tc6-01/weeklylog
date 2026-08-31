@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yearglow"
+  short_description: "把一年的努力做成少字多图的视觉回顾"
+  default_prompt: "使用 $yearglow 读取 weeklylog 的年度事实，生成 8 张少字多图的年度视觉回顾；只呈现已记录的数字、时间和复盘原话。"
