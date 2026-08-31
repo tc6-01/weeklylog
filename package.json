@@ -1,6 +1,6 @@
 {
   "name": "weeklylog-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local-first work log with SQLite, Codex hooks, weekly glow cards, and annual visual memories.",
   "license": "MIT",
   "author": "roubaojiasudu (tc6-01)",
@@ -26,7 +26,8 @@
     "node": ">=18"
   },
   "bin": {
-    "weeklylog": "bin/weeklylog.js"
+    "weeklylog": "bin/weeklylog.js",
+    "weeklylog-cli": "bin/weeklylog.js"
   },
   "files": [
     "bin",
