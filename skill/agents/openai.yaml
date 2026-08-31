@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weeklylog"
+  short_description: "自动记录每周工作与幸福时刻，生成周报、海报和 hook 候选"
+  default_prompt: "使用 $weeklylog 记录我本周的工作与投入时间；如有 hook 候选，先审核再生成深度周报和成长海报。"

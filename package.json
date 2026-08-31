@@ -1,0 +1,39 @@
+{
+  "name": "weeklylog-cli",
+  "version": "0.1.0",
+  "description": "Local-first weekly work log with SQLite, Codex hooks, reports, and growth posters.",
+  "license": "MIT",
+  "author": "roubaojiasudu (tc6-01)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tc6-01/weeklylog.git"
+  },
+  "homepage": "https://github.com/tc6-01/weeklylog",
+  "bugs": {
+    "url": "https://github.com/tc6-01/weeklylog/issues"
+  },
+  "keywords": [
+    "weekly-report",
+    "worklog",
+    "sqlite",
+    "codex",
+    "hooks",
+    "productivity"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "weeklylog": "./bin/weeklylog.js"
+  },
+  "files": [
+    "bin",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node --check bin/weeklylog.js && python3 -m py_compile skill/scripts/weeklylog.py",
+    "pack:check": "npm pack --dry-run"
+  }
+}
