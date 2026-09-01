@@ -90,18 +90,12 @@ npx weeklylog-cli hook config --client codex > /tmp/weeklylog-codex-hooks.json
 
 将输出中的 `hooks` 数组**合并**到 `~/.codex/hooks.json`，不要覆盖已有 hook；然后在 Codex CLI 中运行 `/hooks` 审核并信任。
 
-默认流程是：`SessionStart` 记录会话、`UserPromptSubmit` 记录回合开始、`Stop` 生成候选、`SessionEnd` 收尾。候选不会直接计入正式周报：
+默认流程是：`SessionStart` 记录会话、`UserPromptSubmit` 记录回合开始、`Stop` 生成候选、`SessionEnd` 收尾。自动来源始终先进入候选区，不会直接计入正式周报：
 
 ```bash
 npx weeklylog-cli hook list --week 2026-08-31
 npx weeklylog-cli hook promote 12
 npx weeklylog-cli hook ignore 13
-```
-
-如果确认希望自动直接入账：
-
-```bash
-npx weeklylog-cli hook config --client codex --auto-approve
 ```
 
 Codex hook 的详细事件、字段和隐私边界见 [`skill/references/integrations.md`](skill/references/integrations.md)。
@@ -123,7 +117,7 @@ printf '%s\n' '{
 }' | npx weeklylog-cli hook ingest
 ```
 
-提供稳定的 `id` 可保证重放幂等。工具原始输出和完整 transcript 不会写入数据库，自动耗时代表 AI 回合的可观测时长，不等同于全部人工投入。
+提供稳定的 `id` 可保证重放幂等。工具原始输出和完整 transcript 不会写入数据库，自动耗时代表 AI 回合的可观测时长，不等同于全部人工投入。自动采集结果必须通过 `hook promote` 或 `hook promote-batch` 显式确认后才会成为正式记录。
 
 ## 开发
 

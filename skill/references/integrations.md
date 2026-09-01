@@ -7,7 +7,7 @@
 1. 客户端 hook 把生命周期事件送入 `hook ingest`。
 2. weeklylog 将可识别的工作回合保存为候选；确认后才写入正式 `entries`。
 
-这样可以自动留下“做了什么、何时开始/结束、哪个项目、客户端提供的结构化结果摘要”，又不会把每一次问天气、查命令或工具噪声直接算进周报。`--auto-approve` 可绕过候选层，但应先观察几天采集质量。
+这样可以自动留下“做了什么、何时开始/结束、哪个项目、客户端提供的结构化结果摘要”，又不会把每一次问天气、查命令或工具噪声直接算进周报。自动来源始终先进入候选层，需经用户显式确认后才会进入正式周报。
 
 自动时长是 hook 可观测的会话/回合时长，不是完整人工投入时长。没有明确的开始或结束时间时，字段留空或只记录事件发生时刻，不做推测。
 
@@ -22,11 +22,7 @@ SCRIPT=/Users/roubao/.codex/skills/weeklylog/scripts/weeklylog.py
 python3 "$SCRIPT" hook config --client codex > /tmp/weeklylog-codex-hooks.json
 ```
 
-将输出中的 `hooks` 合并到已有 `~/.codex/hooks.json`，不要整文件覆盖其他 hook。要直接入账则改用：
-
-```bash
-python3 "$SCRIPT" hook config --client codex --auto-approve
-```
+将输出中的 `hooks` 合并到已有 `~/.codex/hooks.json`，不要整文件覆盖其他 hook。自动采集结果会保存在候选区，使用 `hook promote` 或 `hook promote-batch` 后才会入账。
 
 合并后，在 Codex CLI 里运行 `/hooks`，审核新 hook；如果修改了命令路径或参数，需要重新信任新的 hook 定义。命令使用绝对脚本路径，避免 Codex 从子目录启动时找不到文件。
 

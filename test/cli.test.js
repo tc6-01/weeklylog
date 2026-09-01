@@ -480,6 +480,16 @@ test("existing CLI commands remain usable through the package entry point", () =
   const report = runCli(fixture.database, ["report", "--week", "2026-08-31"]);
   assert.equal(report.status, 0, report.stderr);
   assert.match(report.stdout, /完成登录页重构/);
+  for (const heading of [
+    "## 本周核心成果",
+    "## 关键事项进展",
+    "## 问题、阻塞与风险",
+    "## 投入概览",
+    "## 待确认记录",
+    "## 下周计划",
+  ]) {
+    assert.match(report.stdout, new RegExp(heading));
+  }
 
   const reflection = runCli(fixture.database, [
     "reflect",
@@ -534,6 +544,10 @@ test("existing CLI commands remain usable through the package entry point", () =
 
 test("automatic capture does not persist raw prompt text in automation state", () => {
   const fixture = temporaryDatabase();
+  const config = runCli(fixture.database, ["hook", "config", "--client", "codex"]);
+  assert.equal(config.status, 0, config.stderr);
+  assert.doesNotMatch(config.stdout, /auto-approve/);
+
   const missingTime = runCli(
     fixture.database,
     ["hook", "ingest", "--json"],
@@ -734,6 +748,11 @@ test("Git evidence, retention cleanup, SQLite backup, and JSON round-trip are lo
   assert.equal(backup.status, 0, backup.stderr);
   assert.ok(fs.existsSync(backupPath));
 
+  const taggedEntry = runCli(fixture.database, [
+    "add", "--date", "2026-08-31", "--content", "标签冲突测试", "--tags", "原始标签", "--json",
+  ]);
+  assert.equal(taggedEntry.status, 0, taggedEntry.stderr);
+
   const exportPath = path.join(fixture.directory, "weeklylog.json");
   const exported = runCli(fixture.database, ["export", "--output", exportPath, "--json"]);
   assert.equal(exported.status, 0, exported.stderr);
@@ -742,6 +761,13 @@ test("Git evidence, retention cleanup, SQLite backup, and JSON round-trip are lo
   assert.equal(imported.status, 0, imported.stderr);
   const repeated = runCli(importedFixture.database, ["import", "--input", exportPath, "--json"]);
   assert.equal(repeated.status, 0, repeated.stderr);
+  const conflictingPayload = JSON.parse(fs.readFileSync(exportPath, "utf8"));
+  conflictingPayload.entries[0].tags = ["意外标签"];
+  const conflictingPath = path.join(fixture.directory, "conflicting-export.json");
+  fs.writeFileSync(conflictingPath, JSON.stringify(conflictingPayload));
+  const conflict = runCli(importedFixture.database, ["import", "--input", conflictingPath, "--json"]);
+  assert.notEqual(conflict.status, 0);
+  assert.equal(JSON.parse(conflict.stdout).error.code, "conflict");
   const importedCandidates = runCli(importedFixture.database, ["hook", "list", "--week", "2026-08-31", "--json"]);
   assert.equal(JSON.parse(importedCandidates.stdout).count, 1);
 

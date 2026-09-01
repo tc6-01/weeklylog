@@ -153,9 +153,9 @@ Codex 原生 hook 配置片段可用下面的命令生成（只输出配置，�
 python3 <script> hook config --client codex > /tmp/weeklylog-codex-hooks.json
 ```
 
-将输出合并到 `~/.codex/hooks.json` 后，在 Codex CLI 中运行 `/hooks` 审核并信任。默认配置捕捉 `SessionStart`、`UserPromptSubmit`、`Stop` 和 `SessionEnd`；若确认希望不经候选审核直接入账，可生成 `hook config --client codex --auto-approve`。
+将输出合并到 `~/.codex/hooks.json` 后，在 Codex CLI 中运行 `/hooks` 审核并信任。默认配置捕捉 `SessionStart`、`UserPromptSubmit`、`Stop` 和 `SessionEnd`；自动来源始终先进入候选区，必须通过 `hook promote` 或 `hook promote-batch` 显式确认。
 
-其他 AI 客户端只需把一个 JSON 事件通过 stdin 交给 `hook ingest`，即可复用同一套 SQLite、去重和候选审核逻辑。事件协议、隐私边界和客户端示例见 [references/integrations.md](references/integrations.md)。
+其他 AI 客户端只需把一个 JSON 事件通过 stdin 交给 `hook ingest`，即可复用同一套 SQLite、去重和候选审核逻辑；自动采集结果必须显式确认后才会成为正式记录。事件协议、隐私边界和客户端示例见 [references/integrations.md](references/integrations.md)。
 
 自动记录的耗时表示 AI 会话/回合的可观测时长，不等同于全部人工工作时长；周报应明确标注这一点。不要把完整 transcript 或工具输出写入数据库，只保存短标题、摘要、时间和项目元数据。
 

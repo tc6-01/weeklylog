@@ -1687,9 +1687,6 @@ def hook_ingest(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
                 )
             conn.commit()
             promoted = None
-            if args.auto_approve:
-                promoted = promote_capture(conn, candidate)
-                candidate = candidate_by_id(conn, int(candidate["id"])) or candidate
             result = {
                 "action": {
                     "created": "candidate_created",
@@ -2019,8 +2016,6 @@ def hook_config(args: argparse.Namespace) -> None:
         raise SystemExit("当前只内置 Codex 配置；其他客户端请使用 hook ingest 的通用 JSON 协议")
     script = shlex.quote(str(Path(__file__).resolve()))
     command = f"python3 {script} hook ingest --hook-output"
-    if args.auto_approve:
-        command += " --auto-approve"
 
     def handler(*, timeout: int = 10, async_run: bool = False) -> dict[str, Any]:
         item: dict[str, Any] = {
@@ -2425,6 +2420,19 @@ def import_data(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
         )
         emit_failure(failure)
         raise SystemExit(2)
+    invalid_items = [
+        f"{name}[{index}]"
+        for name in collection_names
+        for index, item in enumerate(payload.get(name, []))
+        if not isinstance(item, dict)
+    ]
+    if invalid_items:
+        failure = ImportFailure(
+            "导出数据项必须是 JSON 对象：" + ", ".join(invalid_items),
+            "invalid_item",
+        )
+        emit_failure(failure)
+        raise SystemExit(2)
 
     def ensure_same(table: str, key: str | tuple[str, ...], item: dict[str, Any]) -> None:
         keys = (key,) if isinstance(key, str) else key
@@ -2450,9 +2458,28 @@ def import_data(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
     try:
         for item in payload.get("entries", []):
             entry = dict(item)
-            tags = entry.pop("tags", [])
+            raw_tags = entry.pop("tags", [])
+            if not isinstance(raw_tags, list) or any(not isinstance(tag, str) for tag in raw_tags):
+                fail("entries.tags 必须是字符串数组", "invalid_entry_tags")
+            tags = split_tags(",".join(raw_tags))
+            existing_entry = conn.execute(
+                "SELECT id FROM entries WHERE id = ?", (entry.get("id"),)
+            ).fetchone()
             ensure_same("entries", "id", entry)
             entry_id = int(entry["id"])
+            if existing_entry:
+                existing_tags = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT tag FROM entry_tags WHERE entry_id = ? ORDER BY tag",
+                        (entry_id,),
+                    ).fetchall()
+                ]
+                if existing_tags != tags:
+                    fail(
+                        f"导入冲突：entries (id={entry_id}) 的标签不同",
+                        "conflict",
+                    )
             for tag in tags:
                 conn.execute("INSERT OR IGNORE INTO entry_tags(entry_id, tag) VALUES (?, ?)", (entry_id, str(tag)))
         for table, key in (
@@ -2877,29 +2904,37 @@ def report(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
         counts[item["status"]] += 1
 
     lines = [f"# 周报（{start} 至 {end}）", ""]
-    if pending_captures:
-        lines.extend(
-            [
-                f"> 自动采集到 {pending_captures} 条候选，尚未计入正式统计；运行 `hook list --week {start}` 查看，确认后用 `hook promote ID` 入账。",
-                "",
-            ]
-        )
-    if not items:
-        lines.append("本周暂无工作记录。")
+    lines.extend(
+        [
+            f"> 共记录 {len(items)} 项正式记录：完成 {counts['done']} 项，进行中 {counts['in-progress']} 项，阻塞 {counts['blocked']} 项，计划 {counts['planned']} 项。",
+            "",
+        ]
+    )
+
+    lines.extend(["## 本周核心成果", ""])
+    completed = [item for item in items if item["status"] == "done"]
+    if completed:
+        lines.extend(markdown_item(item) for item in completed)
     else:
-        lines.extend(
-            [
-                f"> 共记录 {len(items)} 项：完成 {counts['done']} 项，进行中 {counts['in-progress']} 项，阻塞 {counts['blocked']} 项，计划 {counts['planned']} 项。",
-                "",
-            ]
-        )
-        for status in STATUSES:
-            group = [item for item in items if item["status"] == status]
-            if not group:
-                continue
-            lines.extend([f"## {STATUS_TITLES[status]}", ""])
-            lines.extend(markdown_item(item) for item in group)
-            lines.append("")
+        lines.append("本周暂无已确认完成的工作成果。")
+    lines.append("")
+
+    lines.extend(["## 关键事项进展", ""])
+    progress = [item for item in items if item["status"] in {"in-progress", "other"}]
+    if progress:
+        for item in progress:
+            lines.append(f"- {STATUS_TITLES[item['status']]}：{markdown_item(item)[2:]}")
+    else:
+        lines.append("本周没有进行中的其他关键事项。")
+    lines.append("")
+
+    lines.extend(["## 问题、阻塞与风险", ""])
+    blockers = [item for item in items if item["status"] == "blocked"]
+    if blockers:
+        lines.extend(markdown_item(item) for item in blockers)
+    else:
+        lines.append("本周没有标记为阻塞的事项。")
+    lines.append("")
 
     lines.extend(
         [
@@ -2913,10 +2948,25 @@ def report(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
         ]
     )
 
+    lines.extend(["## 待确认记录", ""])
+    if pending_captures:
+        lines.append(
+            f"自动采集到 {pending_captures} 条候选，尚未计入正式统计；确认后用 `hook promote ID` 入账。"
+        )
+        for candidate in pending_candidates(conn, start, end):
+            details = [f"#{candidate['id']}", candidate["work_date"], candidate["title"]]
+            if candidate.get("summary"):
+                details.append(candidate["summary"])
+            lines.append(f"- {' · '.join(details)}")
+    else:
+        lines.append("本周没有待确认的自动采集记录。")
+    lines.append("")
+
     planned = [item for item in items if item["status"] == "planned"]
-    lines.extend(["## 下周计划（仅列出明确标记为 planned 的记录）", ""])
-    lines.extend(markdown_item(item) for item in planned)
-    if not planned:
+    lines.extend(["## 下周计划", ""])
+    if planned:
+        lines.extend(markdown_item(item) for item in planned)
+    else:
         lines.append("还没有明确记录的下周计划。")
     lines.append("")
 
@@ -4053,11 +4103,6 @@ def build_parser() -> argparse.ArgumentParser:
         "ingest", help="从 stdin 或文件读取一个 JSON hook 事件"
     )
     ingest.add_argument("--event-file", help="JSON 事件文件；不传则从 stdin 读取")
-    ingest.add_argument(
-        "--auto-approve",
-        action="store_true",
-        help="写入正式工作记录，不经过候选确认（请先确认采集质量）",
-    )
     ingest.add_argument("--json", action="store_true", help="输出处理结果 JSON")
     ingest.add_argument(
         "--hook-output",
@@ -4107,11 +4152,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     config = hook_subparsers.add_parser("config", help="输出客户端 hook 配置片段")
     config.add_argument("--client", choices=("codex",), default="codex")
-    config.add_argument(
-        "--auto-approve",
-        action="store_true",
-        help="配置为自动直接入账；默认保留候选待确认",
-    )
 
     outbox = subparsers.add_parser("outbox", help="查看和领取本地 Integration Event")
     outbox_subparsers = outbox.add_subparsers(dest="outbox_command", required=True)
