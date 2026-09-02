@@ -117,6 +117,97 @@ function ensureColumn(db: Db, table: string, column: string, definition: string)
   if (!columnNames(db, table).has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+function needsTableCompaction(db: Db, table: string, allowed: string[]): boolean {
+  const columns = columnNames(db, table);
+  return columns.size !== allowed.length || allowed.some((column) => !columns.has(column));
+}
+
+function compactLegacyTables(db: Db): void {
+  const entryColumns = ["id", "work_date", "content", "project", "category", "status", "result", "start_time", "end_time", "duration_minutes", "source", "capture_id", "jira_key", "ai_turn_count", "collaboration_note", "created_at", "updated_at"];
+  const candidateColumns = ["id", "capture_id", "source", "client", "session_id", "turn_id", "work_date", "title", "summary", "project", "category", "work_status", "start_time", "end_time", "duration_minutes", "cwd", "tags", "review_state", "entry_id", "jira_key", "ai_turn_count", "collaboration_note", "confidence", "provenance", "created_at", "updated_at"];
+  const compactEntries = needsTableCompaction(db, "entries", entryColumns);
+  const compactCandidates = needsTableCompaction(db, "capture_candidates", candidateColumns);
+  if (!compactEntries && !compactCandidates) return;
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    if (compactEntries) {
+      db.exec(`CREATE TABLE entries_compact (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        content TEXT NOT NULL,
+        project TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'done',
+        result TEXT NOT NULL DEFAULT '',
+        start_time TEXT,
+        end_time TEXT,
+        duration_minutes INTEGER,
+        source TEXT NOT NULL DEFAULT 'manual',
+        capture_id TEXT,
+        jira_key TEXT,
+        ai_turn_count INTEGER,
+        collaboration_note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`INSERT INTO entries_compact(id, work_date, content, project, category, status, result, start_time, end_time, duration_minutes, source, capture_id, jira_key, ai_turn_count, collaboration_note, created_at, updated_at)
+        SELECT id, work_date, content, project, category,
+          CASE WHEN status IN ('done', 'in-progress', 'blocked', 'planned', 'other') THEN status ELSE 'other' END,
+          result, start_time, end_time, duration_minutes, source, capture_id, jira_key, ai_turn_count, collaboration_note, created_at, updated_at
+        FROM entries`);
+      db.exec("DROP TABLE entries");
+      db.exec("ALTER TABLE entries_compact RENAME TO entries");
+    }
+    if (compactCandidates) {
+      db.exec(`CREATE TABLE capture_candidates_compact (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        capture_id TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL,
+        client TEXT NOT NULL DEFAULT '',
+        session_id TEXT,
+        turn_id TEXT,
+        work_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        project TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'AI协作',
+        work_status TEXT NOT NULL DEFAULT 'done',
+        start_time TEXT,
+        end_time TEXT,
+        duration_minutes INTEGER,
+        cwd TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '',
+        review_state TEXT NOT NULL DEFAULT 'candidate',
+        entry_id INTEGER REFERENCES entries(id) ON DELETE SET NULL,
+        jira_key TEXT,
+        ai_turn_count INTEGER,
+        collaboration_note TEXT,
+        confidence REAL NOT NULL DEFAULT 0.5,
+        provenance TEXT NOT NULL DEFAULT 'heuristic',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`INSERT INTO capture_candidates_compact(id, capture_id, source, client, session_id, turn_id, work_date, title, summary, project, category, work_status, start_time, end_time, duration_minutes, cwd, tags, review_state, entry_id, jira_key, ai_turn_count, collaboration_note, confidence, provenance, created_at, updated_at)
+        SELECT id, capture_id, source, client, session_id, turn_id, work_date, title, summary, project, category,
+          CASE WHEN work_status IN ('done', 'in-progress', 'blocked', 'planned', 'other') THEN work_status ELSE 'other' END,
+          start_time, end_time, duration_minutes, cwd, tags,
+          CASE WHEN review_state IN ('candidate', 'promoted', 'ignored') THEN review_state ELSE 'candidate' END,
+          entry_id, jira_key, ai_turn_count, collaboration_note, confidence, provenance, created_at, updated_at
+        FROM capture_candidates`);
+      db.exec("DROP TABLE capture_candidates");
+      db.exec("ALTER TABLE capture_candidates_compact RENAME TO capture_candidates");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_work_date ON entries(work_date)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_candidates_week ON capture_candidates(work_date, review_state)");
+    db.exec("DROP INDEX IF EXISTS idx_entry_tags_tag");
+    db.exec("INSERT OR REPLACE INTO sqlite_sequence(name, seq) SELECT 'entries', COALESCE(MAX(id), 0) FROM entries");
+    db.exec("INSERT OR REPLACE INTO sqlite_sequence(name, seq) SELECT 'capture_candidates', COALESCE(MAX(id), 0) FROM capture_candidates");
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 function initSchema(db: Db): void {
   db.exec("PRAGMA foreign_keys = ON");
   // Hooks are short-lived one-shot processes. DELETE journaling avoids a growing
@@ -231,6 +322,9 @@ function initSchema(db: Db): void {
   }
   if (legacyTurns) db.exec("DROP TABLE IF EXISTS automation_turns");
   if (legacySessions) db.exec("DROP TABLE IF EXISTS automation_sessions");
+  db.exec("DROP TABLE IF EXISTS evidence");
+  db.exec("DROP TABLE IF EXISTS integration_outbox");
+  compactLegacyTables(db);
   db.exec("PRAGMA user_version = 4");
 }
 
