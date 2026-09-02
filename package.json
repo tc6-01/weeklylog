@@ -1,7 +1,7 @@
 {
   "name": "weeklylog-cli",
-  "version": "0.3.0",
-  "description": "Local-first work log with SQLite, Codex hooks, weekly glow cards, and annual visual memories.",
+  "version": "0.4.0",
+  "description": "Local-first TypeScript work log with SQLite, Codex hooks, weekly reports, Jira drafts, and weekly glow cards.",
   "license": "MIT",
   "author": "roubaojiasudu (tc6-01)",
   "repository": {
@@ -19,26 +19,32 @@
     "codex",
     "hooks",
     "productivity",
-    "weekglow",
-    "yearglow"
+    "weekglow"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22.5"
   },
   "bin": {
-    "weeklylog": "bin/weeklylog.js",
-    "weeklylog-cli": "bin/weeklylog.js"
+    "weeklylog": "dist/cli.js",
+    "weeklylog-cli": "dist/cli.js"
   },
   "files": [
-    "bin",
+    "dist",
     "skill",
     "skills",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "tsc",
+    "pretest": "npm run build",
+    "prepublishOnly": "npm run build",
     "test": "node --test test/*.test.js",
-    "check": "node --check bin/weeklylog.js && python3 -m py_compile skill/scripts/weeklylog.py && npm test",
+    "check": "npm run build && npm test",
     "pack:check": "npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
   }
 }

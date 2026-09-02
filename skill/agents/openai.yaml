@@ -1,4 +1,4 @@
 interface:
   display_name: "Weeklylog"
   short_description: "记录工作事实、生成周报并承接视觉回顾"
-  default_prompt: "使用 $weeklylog 记录或查询工作事实；需要少字多图的周度/年度视觉回顾时，转交 $weekglow 或 $yearglow。"
+  default_prompt: "使用 $weeklylog 记录或查询工作事实；需要少字多图的周度视觉回顾时，转交 $weekglow。"
