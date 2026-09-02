@@ -1,117 +1,93 @@
 # weeklylog
 
-`weeklylog` 是一个 local-first 的工作记录工具：数据保存在本机 SQLite，支持深度周报、年度长篇总结、成长海报，以及 Codex/其他 AI 客户端的 hook 自动采集。视觉回顾已经拆成两个独立 skill：`weekglow` 负责每周多卡片，`yearglow` 负责年度多页记忆。
+`weeklylog` 是一个面向个人开发者的本地工作记录工具：Codex 自动捕捉工作线索，用户确认后形成正式记录，再生成个人周报和 Jira 更新草稿。数据只保存在本机 SQLite；周度视觉回顾由独立的 `weekglow` skill 消费。
 
-由于 npm 上已有同名包，本项目的 npx 包名是 `weeklylog-cli`，命令名仍然是 `weeklylog`。
+运行时只需要 Node.js 22.5+，不依赖 Python。
 
-## 安装
-
-需要 Node.js 18+ 和 Python 3。
-
-直接使用，不写入全局文件：
+## 一次初始化
 
 ```bash
-npx weeklylog-cli doctor
 npx weeklylog-cli init
-npx weeklylog-cli add --content "完成登录页重构" --minutes 90 --status done
-npx weeklylog-cli report --detail
 ```
 
-一次安装三个 Codex skill（`weeklylog`、`weekglow`、`yearglow`）：
+终端向导一次完成：
+
+1. 选择 AI 客户端（当前支持 Codex）
+2. 安装 `weeklylog` 和 `weekglow` skill
+3. 将自动记录 hooks 合并到 `~/.codex/hooks.json`
+4. 初始化 `~/.codex/data/weeklylog/worklog.sqlite3`
+
+脚本化环境可直接指定 Codex：
 
 ```bash
-npx weeklylog-cli install
+npx weeklylog-cli init --client codex --json
 ```
 
-目标已存在时，使用 `--force` 更新；也可以指定 skills 根目录：
+已有配置会被保留，hooks 幂等合并。`--force` 只更新 weeklylog 自己管理的 skill 文件；不覆盖其他 hooks。
+
+## 日常记录
 
 ```bash
-npx weeklylog-cli install --force
-npx weeklylog-cli install --skills-dir /path/to/.codex/skills
+weeklylog add --content "完成登录页重构" \
+  --project "移动端" --status done \
+  --result "减少重复组件" --minutes 90 --ai-turn-count 4 \
+  --collaboration-note "来回解释了几次，最后才对齐" --tags "前端,重构"
+
+weeklylog list --week 2026-08-31 --json
+weeklylog update 12 --result "已上线并通过回归" --minutes 135 --json
+weeklylog reflect --week 2026-08-31 --mood 4.2 \
+  --happy-moment "顺利上线"
 ```
 
-兼容旧版的精确目标参数仍然可用（只安装 `weeklylog`）：
+用户明确要求记录的事实直接进入正式 `entries`，不会再经过候选审核。没有明确提供的成果、工时或 Jira 关联不会被猜测。
+
+`ai_turn_count` 只表示这项工作涉及的 AI 往返轮数；`collaboration_note` 只保存用户主动填写的体验原话。系统不把它们转换成情感分数，也不自动推断“沟通质量”。
+
+## 自动记录与候选审核
+
+Codex hooks 调用本地命令：
 
 ```bash
-npx weeklylog-cli install --target /path/to/.codex/skills/weeklylog
+node ~/.codex/skills/weeklylog/scripts/weeklylog.js hook ingest --hook-output
 ```
 
-默认数据库是 `~/.codex/data/weeklylog/worklog.sqlite3`，也可以通过 `--db PATH` 或 `WEEKLYLOG_DB` 覆盖。
+`SessionStart`、`UserPromptSubmit`、`Stop`、`SessionEnd` 会记录会话边界和结构化工作摘要。原始 prompt、回复、工具输出不写入 SQLite；自动结果先进入候选区。
 
-## 常用命令
+SQLite 不是对话数据库：每个活动会话最多只保留一行聚合计数（AI 往返轮数、时间边界和工作目录），不会为每轮对话建行。数据库使用 4 KiB 页、10 MiB 硬上限，并定期清理过期候选和会话元数据；达到上限时拒绝新增，避免继续膨胀。
 
 ```bash
-npx weeklylog-cli add --content "排查线上超时" --start 21:30 --end 23:45 --project "支付服务"
-npx weeklylog-cli list --week 2026-08-31 --json
-npx weeklylog-cli report --week 2026-08-31 --detail
-npx weeklylog-cli reflect --week 2026-08-31 --mood 4.2 --hard-moment "联调卡了三个小时"
-npx weeklylog-cli poster --week 2026-08-31 --output weeklylog.png
-npx weeklylog-cli annual-report --year 2026 --output weeklylog-2026.md
-npx weeklylog-cli dataset --week 2026-08-31 --json
-npx weeklylog-cli weekglow --week 2026-08-31 --output-dir ./weekglow-2026-08-31 --format both
-npx weeklylog-cli yearglow --year 2026 --output-dir ./yearglow-2026 --format both
+weeklylog hook list --week 2026-08-31 --json
+weeklylog hook promote-batch 12 13 --json
+weeklylog hook ignore 14 --json
 ```
 
-## 两个视觉 skill
+只有确认后的记录才会进入周报和 Jira 草稿。
 
-`weekglow` 默认输出 6 张卡片：这一周留下多少工作痕迹、最晚干到几点、最耗时的问题、扛住的时刻、小小的胜利，以及给自己的话。
-
-`yearglow` 默认输出 8 张页面：全年总览、月份节奏、最大投入、深夜记录、项目星座、艰辛时刻、开心瞬间和写给未来的自己。
-
-两者都采用“少字、多图、事实叠加”的方式：SVG 负责准确数字和用户原话，渐变、光圈和节奏图形负责情绪。需要更个性化的插画或照片背景时，可在 Codex 中让 `imagegen` 生成无文字背景，再叠加事实层；缺失字段会明确显示“还没有记录”，不会把估算当成事实。
-
-如果只需要可检索的数据，可用 `dataset` 导出 JSON；如果需要 Markdown 细节，继续使用 `report --detail` 或 `annual-report`。
-
-## Codex hook 集成
-
-生成配置片段：
+## 周报与周度视觉回顾
 
 ```bash
-npx weeklylog-cli hook config --client codex > /tmp/weeklylog-codex-hooks.json
+weeklylog report --week 2026-08-31 --detail
+weeklylog report --week 2026-08-31 --detail --output ./weeklylog-2026-08-31.md
+weeklylog dataset --week 2026-08-31 --json
+weeklylog weekglow --week 2026-08-31 --output-dir ./weekglow-2026-08-31 --json
 ```
 
-将输出中的 `hooks` 数组**合并**到 `~/.codex/hooks.json`，不要覆盖已有 hook；然后在 Codex CLI 中运行 `/hooks` 审核并信任。
+`report` 输出个人复盘和 Jira 更新所需事实；不使用上级汇报口吻，也不会自动写 Jira。`weekglow` 输出六张少字多图 SVG 卡片，只读正式记录。
 
-默认流程是：`SessionStart` 记录会话、`UserPromptSubmit` 记录回合开始、`Stop` 生成候选、`SessionEnd` 收尾。候选不会直接计入正式周报：
+后续 cronjob 只需要定时调用 `report` 或 `weekglow`，不参与记录和候选确认。
 
-```bash
-npx weeklylog-cli hook list --week 2026-08-31
-npx weeklylog-cli hook promote 12
-npx weeklylog-cli hook ignore 13
+## 命令
+
+```text
+init                         一次性初始化 Codex、skill、hooks 和 SQLite
+add                          写入一条正式工作记录
+list                         查询正式工作记录
+update                       修改记录
+reflect                      保存或查看每周复盘
+report                       生成 Markdown 周报
+dataset                      导出周报/视觉使用的数据集
+hook ingest                  接收 Codex hook 事件
+hook list/promote/ignore     审核自动采集候选
+weekglow                    生成周度视觉卡片
+doctor                       检查 Node 和数据库路径
 ```
-
-如果确认希望自动直接入账：
-
-```bash
-npx weeklylog-cli hook config --client codex --auto-approve
-```
-
-Codex hook 的详细事件、字段和隐私边界见 [`skill/references/integrations.md`](skill/references/integrations.md)。
-
-## 其他 AI 客户端
-
-客户端只需将标准 JSON 事件通过 stdin 传给 `hook ingest`：
-
-```bash
-printf '%s\n' '{
-  "event": "task_completed",
-  "id": "session-001-turn-009",
-  "client": "my-ai-client",
-  "title": "排查线上超时",
-  "summary": "定位连接池配置并完成回归验证",
-  "project": "支付服务",
-  "started_at": "2026-08-31T21:30:00+08:00",
-  "ended_at": "2026-08-31T23:45:00+08:00"
-}' | npx weeklylog-cli hook ingest
-```
-
-提供稳定的 `id` 可保证重放幂等。工具原始输出和完整 transcript 不会写入数据库，自动耗时代表 AI 回合的可观测时长，不等同于全部人工投入。
-
-## 开发
-
-```bash
-npm run check
-npm run pack:check
-```
-
-Python CLI 和 `weeklylog` skill 位于 [`skill/`](skill/)，视觉 skills 位于 [`skills/`](skills/)。Node wrapper 负责 npx 分发、三套 skill 安装和运行时检查。
