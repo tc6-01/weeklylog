@@ -29,7 +29,7 @@ Codex hook / 用户手动补录
 
 工作事项可选记录 `ai_turn_count`（客观 AI 往返轮数）和 `collaboration_note`（用户主动填写的协作体验原话）。两者只用于周度叙事，不转换为情感分数。
 
-原始 prompt、完整模型回复、工具输出、diff 和密钥不落盘。没有明确时长不估算；没有明确成果不补写。
+原始 prompt、完整模型回复、工具输出、diff 和密钥不落盘。Codex 原生 `Stop` 只有 `last_assistant_message` 时，仅在内存提取带有工作信号的一行短标题和摘要，再丢弃原文。没有明确时长不估算；没有明确成果不补写。
 
 ### SQLite 存储边界
 

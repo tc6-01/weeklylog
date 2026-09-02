@@ -1,6 +1,6 @@
 {
   "name": "weeklylog-cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Local-first TypeScript work log with SQLite, Codex hooks, weekly reports, Jira drafts, and weekly glow cards.",
   "license": "MIT",
   "author": "roubaojiasudu (tc6-01)",

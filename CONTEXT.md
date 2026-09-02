@@ -50,7 +50,7 @@ Codex hook ─┐
 
 - `entries` 是正式事实来源。
 - `capture_candidates` 只能作为待确认线索。
-- 自动 hook 不保存完整 prompt、模型回复、工具输出、diff 或密钥。
+- 自动 hook 不保存完整 prompt、模型回复、工具输出、diff 或密钥；`Stop` 只允许落盘极短的工作摘要候选。
 - SQLite 不是对话存档：每个会话只保留一行聚合计数，不保存逐轮 prompt/reply/tool output；数据库预算为 10 MiB，达到上限时拒绝新增自动候选。
 - 没有明确投入时间不估算；AI 可观测时长不等于完整人工工时。
 - `ai_turn_count` 只统计客户端提供或当前会话可见的客观 AI 往返轮数；`collaboration_note` 只保存用户原话，不做 sentiment score。

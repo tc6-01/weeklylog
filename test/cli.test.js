@@ -110,6 +110,20 @@ test("Codex hook events create reviewable candidates without storing prompt text
   assert.match(report.stdout, /本周最费沟通的一次/);
 });
 
+test("native Codex Stop payload derives only a short work candidate", () => {
+  const item = fixture();
+  const fullReply = "完成 SQLite hook 迁移\n已验证 10MB 上限和候选审核流程。\n" + "不应落盘的长回复 ".repeat(200);
+  const stop = runCli(item.database, ["hook", "ingest", "--json"], JSON.stringify({
+    hook_event_name: "Stop", client: "codex", session_id: "native-stop", turn_id: "turn-1",
+    last_assistant_message: fullReply,
+  }));
+  assert.equal(stop.status, 0, stop.stderr);
+  const candidate = JSON.parse(stop.stdout).candidate;
+  assert.equal(candidate.title, "完成 SQLite hook 迁移");
+  assert.match(candidate.summary, /已验证 10MB/);
+  assert.equal(candidate.summary.includes("不应落盘的长回复"), false);
+});
+
 test("hook capture stores one aggregate session row and stays within the 10MB budget", () => {
   const item = fixture();
   for (let index = 0; index < 60; index += 1) {

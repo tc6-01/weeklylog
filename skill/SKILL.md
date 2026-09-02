@@ -67,7 +67,7 @@ node "$CLI" dataset --week 2026-08-31 --json
 node "$CLI" hook ingest --hook-output
 ```
 
-`SessionStart` 和 `SessionEnd` 记录会话边界，`UserPromptSubmit` 只递增当前会话的一行聚合轮数，`Stop` 根据结构化标题、摘要和时间生成候选。原始 prompt、回复和工具输出不会落盘，也不会建立逐轮对话表。
+`SessionStart` 和 `SessionEnd` 记录会话边界，`UserPromptSubmit` 只递增当前会话的一行聚合轮数，`Stop` 优先读取结构化标题/摘要；Codex 原生只提供 `last_assistant_message` 时，仅在内存提取一行极短工作摘要并生成候选。原始 prompt、完整回复和工具输出不会落盘，也不会建立逐轮对话表。
 
 SQLite 设有 10 MiB 硬存储预算：会话元数据只保留最近的少量聚合行，已忽略或已确认的候选会过期清理，字段也有长度上限；达到预算时不再写入新的自动候选。
 

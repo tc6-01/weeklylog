@@ -51,7 +51,7 @@ Codex hooks 调用本地命令：
 node ~/.codex/skills/weeklylog/scripts/weeklylog.js hook ingest --hook-output
 ```
 
-`SessionStart`、`UserPromptSubmit`、`Stop`、`SessionEnd` 会记录会话边界和结构化工作摘要。原始 prompt、回复、工具输出不写入 SQLite；自动结果先进入候选区。
+`SessionStart`、`UserPromptSubmit`、`Stop`、`SessionEnd` 会记录会话边界和结构化工作摘要。Codex 的 `Stop` 事件只有原生助手消息时，程序只在内存中提取一行极短工作摘要；原始 prompt、完整回复、工具输出不写入 SQLite，自动结果先进入候选区。
 
 SQLite 不是对话数据库：每个活动会话最多只保留一行聚合计数（AI 往返轮数、时间边界和工作目录），不会为每轮对话建行。数据库使用 4 KiB 页、10 MiB 硬上限，并定期清理过期候选和会话元数据；达到上限时拒绝新增，避免继续膨胀。
 

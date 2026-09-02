@@ -12,7 +12,7 @@ type Row = Record<string, any>;
 
 const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_DB = path.join(os.homedir(), ".codex", "data", "weeklylog", "worklog.sqlite3");
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const STATUSES = new Set(["done", "in-progress", "blocked", "planned", "other"]);
 const EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"];
 const MAX_DB_BYTES = 10 * 1024 * 1024;
@@ -486,6 +486,31 @@ function observedTurnCount(db: Db, sessionId: string): number | null {
   return count || null;
 }
 
+const WORK_SIGNAL = /(完成|实现|修复|修改|新增|删除|更新|验证|测试|发布|配置|迁移|排查|定位|生成|部署|提交|推送|重构|上线|失败|通过|fix|implement|add|update|test|publish|deploy|configur|migrat|refactor|build|pass|fail|commit|push)/i;
+
+function cleanSnippet(value: unknown, max: number): string {
+  return short(String(value ?? "").replace(/[`*_#>]/g, "").replace(/^\s*[-+]\s*/, ""), max);
+}
+
+function stopContent(payload: Row): { title: string; summary: string } | null {
+  const explicitTitle = cleanSnippet(payload.title || payload.content || "", 240);
+  const explicitSummary = short(payload.summary || payload.result || "", 1200);
+  if (explicitTitle || explicitSummary) {
+    return { title: explicitTitle, summary: explicitSummary };
+  }
+
+  // Codex's native Stop payload exposes last_assistant_message. Read it only
+  // in memory and retain at most a title plus one short summary line.
+  const message = String(payload.last_assistant_message || "");
+  if (!message.trim()) return null;
+  const lines = message.split(/\r?\n/).map((line) => cleanSnippet(line, 240)).filter(Boolean);
+  const title = lines[0] || "";
+  const summary = short(lines[1] || "", 500);
+  const combined = `${title} ${summary}`;
+  if (!WORK_SIGNAL.test(combined)) return null;
+  return { title, summary: summary || title };
+}
+
 function hookIngest(db: Db, args: string[]): void {
   let input = "";
   if (option(args, "--event-file")) input = fs.readFileSync(path.resolve(option(args, "--event-file")!), "utf8");
@@ -520,11 +545,9 @@ function hookIngest(db: Db, args: string[]): void {
         last_turn_id=CASE WHEN excluded.last_turn_id <> '' THEN excluded.last_turn_id ELSE capture_sessions.last_turn_id END,
         updated_at=excluded.updated_at`, sid, event, client, cwd, payload.started_at || timestamp, tid, timestamp, timestamp);
   } else if (kind === "stop") {
-    const title = short(payload.title || payload.content || "", 240);
-    // Only accept a short structured summary/result from the hook payload.
-    // Raw assistant replies and tool output are intentionally ignored.
-    const summary = short(payload.summary || payload.result || "", 1200);
-    if (title || summary) {
+    const derived = stopContent(payload);
+    if (derived) {
+      const { title, summary } = derived;
       const workDate = validDate(String(payload.work_date || payload.date || (payload.started_at || timestamp).slice(0, 10)));
       const captureId = short(payload.capture_id || payload.event_id || payload.eventId || payload.id || `${client}-${hash(`${client}|${sessionId}|${turnId}|${event}|${workDate}|${title}|${summary}`)}`, 200);
       const start = payload.started_at || null;
